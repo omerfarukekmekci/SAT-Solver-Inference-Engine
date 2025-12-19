@@ -1,0 +1,19 @@
+--- HEADER AND METADATA ---
+V: 2
+C: 4
+
+--- VARIABLE ASSIGNMENTS ---
+1    | UNASSIGNED
+2    | UNASSIGNED
+
+--- CLAUSE LIST ---
+C1    | [1, 2]      | [0, 1]
+C2    | [-1, 2]     | [0, 1]
+C3    | [1, -2]     | [0, 1]
+C4    | [-1, -2]    | [0, 1]
+
+--- 2-WATCHED LITERALS MAPPING ---
+1     | [C1, C3]
+-1    | [C2, C4]
+2     | [C1, C2]
+-2    | [C3, C4]

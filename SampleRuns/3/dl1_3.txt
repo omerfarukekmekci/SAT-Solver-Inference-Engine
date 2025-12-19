@@ -1,0 +1,18 @@
+--- STATUS ---
+STATUS: UNSAT
+DL: 1
+CONFLICT_ID: 4
+
+--- BCP EXECUTION LOG ---
+[DL1] DECIDE      L=1   |
+[DL1] SATISFIED         | C1
+[DL1] SATISFIED         | C3
+[DL1] UNIT        L=2   | C2
+[DL1] ASSIGN      L=2   |
+[DL1] SATISFIED         | C2
+[DL1] CONFLICT          | Violation: C4
+[DL1] BACKTRACK         | 
+
+--- CURRENT VARIABLE STATE ---
+1    | TRUE
+2    | TRUE

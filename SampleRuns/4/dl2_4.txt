@@ -1,0 +1,20 @@
+--- STATUS ---
+STATUS: SAT
+DL: 2
+CONFLICT_ID: None
+
+--- BCP EXECUTION LOG ---
+[DL2] DECIDE      L=2   |
+[DL2] SATISFIED         | C2
+[DL2] UNIT        L=3   | C1
+[DL2] ASSIGN      L=3   |
+[DL2] SATISFIED         | C1
+[DL2] UNIT        L=-4  | C3
+[DL2] ASSIGN      L=-4  |
+[DL2] SATISFIED         | C3
+
+--- CURRENT VARIABLE STATE ---
+1    | TRUE
+2    | TRUE
+3    | TRUE
+4    | FALSE
