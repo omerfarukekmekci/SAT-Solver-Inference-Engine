@@ -101,6 +101,9 @@ class CNFState:
 
         # implication / reason: reason[var] = clause_id that implied it (None if decision)
         self.reason: List[Optional[int]] = [None] * (num_vars + 1)
+        
+        # Track if DL0 initial scan has been completed
+        self.dl0_done = False
 
     def init_2wl(self) -> None:
         # Initialize watches per clause and populate watch lists
@@ -233,12 +236,19 @@ class InferenceEngine:
         self.state.reason[v] = reason_clause
 
         if is_decision:
-            self._log(res, dl, "DECIDE L=" + str(lit) + " |")
+            self._log(res, dl, "DECIDE      L=" + str(lit).ljust(5) + "|")
         else:
             # forced assignment (deduction)
-            self._log(res, dl, "ASSIGN L=" + str(lit) + " |")
+            self._log(res, dl, "ASSIGN      L=" + str(lit).ljust(5) + "|")
             if reason_clause is not None:
                 res.new_deductions.append((lit, reason_clause))
+        
+        # Log clauses satisfied by this literal
+        lit_idx = lit_to_index(lit, self.state.num_vars)
+        watch_bucket = self.state.watch_list[lit_idx]
+        for cid in watch_bucket:
+            self._log(res, dl, "SATISFIED         | C" + str(cid))
+        
         return True
 
     def _process_watched_false_literal(self, res: BCPResult, dl: int, false_lit: int, queue: List[int]) -> bool:
@@ -270,7 +280,7 @@ class InferenceEngine:
                 if lit_is_false(clause.lits[wpos], self.state.assignment):
                     res.status = "CONFLICT"
                     res.conflict_id = cid
-                    self._log(res, dl, "CONFLICT | Violation: C" + str(cid))
+                    self._log(res, dl, "CONFLICT          | Violation: C" + str(cid))
                     return False
                 i += 1
                 continue
@@ -278,7 +288,7 @@ class InferenceEngine:
             other_lit = clause.lits[other_pos]
 
             if lit_is_true(other_lit, self.state.assignment):
-                self._log(res, dl, "SATISFIED | C" + str(cid))
+                self._log(res, dl, "SATISFIED         | C" + str(cid))
                 i += 1
                 continue
 
@@ -319,24 +329,24 @@ class InferenceEngine:
                 continue
 
             if lit_is_unassigned(other_lit, self.state.assignment):
-                self._log(res, dl, "UNIT L=" + str(other_lit) + " | C" + str(cid))
+                self._log(res, dl, "UNIT        L=" + str(other_lit).ljust(5) + "| C" + str(cid))
 
                 ok = self._set_literal(res, dl, other_lit, cid, is_decision=False)
                 if not ok:
                     res.status = "CONFLICT"
                     res.conflict_id = cid
-                    self._log(res, dl, "CONFLICT | Violation: C" + str(cid))
+                    self._log(res, dl, "CONFLICT          | Violation: C" + str(cid))
                     return False
 
                 self._enqueue(queue, -other_lit)
-                self._log(res, dl, "SATISFIED | C" + str(cid))
+                self._log(res, dl, "SATISFIED         | C" + str(cid))
                 i += 1
                 continue
 
             if lit_is_false(other_lit, self.state.assignment):
                 res.status = "CONFLICT"
                 res.conflict_id = cid
-                self._log(res, dl, "CONFLICT | Violation: C" + str(cid))
+                self._log(res, dl, "CONFLICT          | Violation: C" + str(cid))
                 return False
 
             i += 1
@@ -367,25 +377,24 @@ class InferenceEngine:
                 if cur != 0 and cur != desired:
                     res.status = "CONFLICT"
                     res.conflict_id = c.cid
-                    self._log(res, dl, "CONFLICT | Violation: C" + str(c.cid))
+                    self._log(res, dl, "CONFLICT          | Violation: C" + str(c.cid))
                     return False
 
                 if cur == 0:
-                    self._log(res, dl, "UNIT L=" + str(lit) + " | C" + str(c.cid))
+                    self._log(res, dl, "UNIT        L=" + str(lit).ljust(5) + "| C" + str(c.cid))
                     ok = self._set_literal(res, dl, lit, c.cid, is_decision=False)
                     if not ok:
                         res.status = "CONFLICT"
                         res.conflict_id = c.cid
-                        self._log(res, dl, "CONFLICT | Violation: C" + str(c.cid))
+                        self._log(res, dl, "CONFLICT          | Violation: C" + str(c.cid))
                         return False
-                    self._log(res, dl, "SATISFIED | C" + str(c.cid))
+                    self._log(res, dl, "SATISFIED         | C" + str(c.cid))
                     self._enqueue(queue, -lit)
             ci += 1
 
-        qi = 0
-        while qi < len(queue):
-            falselit = queue[qi]
-            qi += 1
+        # Process queue in LIFO order (stack-based) to match expected output
+        while len(queue) > 0:
+            falselit = queue.pop()  # Pop from end (LIFO)
             ok = self._process_watched_false_literal(res, dl, falselit, queue)
             if not ok:
                 return False
@@ -399,17 +408,21 @@ class InferenceEngine:
     def run_bcp(self, trigger_lit: Optional[int], dl: int) -> BCPResult:
         res = BCPResult()
         
-        ok0 = self._initial_unit_scan_dl0(res)
-        if not ok0:
-            res.dl = 0
-            return res
+        # Only run DL0 initial scan once per instance
+        if not self.state.dl0_done:
+            ok0 = self._initial_unit_scan_dl0(res)
+            self.state.dl0_done = True
+            
+            if not ok0:
+                res.dl = 0
+                return res
 
-        if res.status == "SAT":
-            res.dl = 0
-            return res
+            if res.status == "SAT":
+                res.dl = 0
+                return res
 
         if trigger_lit is None or trigger_lit == 0:
-            res.dl = 0
+            res.dl = 0 if not self.state.dl0_done else dl
             return res
 
         res.dl = dl
@@ -424,10 +437,9 @@ class InferenceEngine:
         queue: List[int] = []
         self._enqueue(queue, -trigger_lit)
 
-        qi = 0
-        while qi < len(queue):
-            falselit = queue[qi]
-            qi += 1
+        # Process queue in LIFO order (stack-based) to match expected output
+        while len(queue) > 0:
+            falselit = queue.pop()  # Pop from end (LIFO)
             ok = self._process_watched_false_literal(res, dl, falselit, queue)
             if not ok:
                 return res
@@ -456,10 +468,9 @@ class InferenceEngine:
                 return False
             self._enqueue(queue, -lit)
             
-        qi = 0
-        while qi < len(queue):
-            falselit = queue[qi]
-            qi += 1
+        # Process queue in LIFO order (stack-based)
+        while len(queue) > 0:
+            falselit = queue.pop()  # Pop from end (LIFO)
             ok = self._process_watched_false_literal(res, dl, falselit, queue)
             if not ok:
                 return False
@@ -497,19 +508,27 @@ def read_trigger_file(path: str) -> Tuple[int, int]:
 def write_bcp_output(path: str, res: BCPResult, state: CNFState) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write("--- STATUS ---\n")
-        f.write("STATUS: " + res.status + "\n")
+        # Convert CONFLICT to UNSAT for output
+        status_output = "UNSAT" if res.status == "CONFLICT" else res.status
+        f.write("STATUS: " + status_output + "\n")
         f.write("DL: " + str(res.dl) + "\n")
         if res.conflict_id is None:
             f.write("CONFLICT_ID: None\n")
         else:
             f.write("CONFLICT_ID: " + str(res.conflict_id) + "\n")
 
+        f.write("\n")  # Empty line before BCP log
         f.write("--- BCP EXECUTION LOG ---\n")
         li = 0
         while li < len(res.exec_log):
             f.write(res.exec_log[li] + "\n")
             li += 1
-
+        
+        # Add BACKTRACK line if there was a conflict
+        if res.status == "CONFLICT":
+            f.write("[DL" + str(res.dl) + "] BACKTRACK         |\n")
+        
+        f.write("\n")  # Empty line before variable state
         f.write("--- CURRENT VARIABLE STATE ---\n")
         v = 1
         while v <= state.num_vars:
@@ -520,8 +539,91 @@ def write_bcp_output(path: str, res: BCPResult, state: CNFState) -> None:
                 s = "TRUE"
             else:
                 s = "FALSE"
-            f.write(str(v) + " | " + s + "\n")
+            f.write(str(v).ljust(4) + " | " + s + "\n")
             v += 1
+
+
+# -----------------------------
+# Sequential Decision Loading Helpers
+# -----------------------------
+
+def get_sample_info(trigger_path: str) -> Tuple[int, str]:
+    # Extract sample number and base directory from trigger file path
+    # Example: "SampleRuns\\4\\decision2_4.txt" -> (4, "SampleRuns\\4")
+    # Example: "SampleRuns/4/decision2_4.txt" -> (4, "SampleRuns/4")
+    
+    import os
+    import re
+    
+    # Normalize path separators
+    norm_path = trigger_path.replace("\\", "/")
+    
+    # Extract filename
+    filename = os.path.basename(norm_path)
+    
+    # Extract sample number from filename (e.g., "decision2_4.txt" -> 4)
+    match = re.search(r'_(\d+)\.txt$', filename)
+    if match:
+        sample_num = int(match.group(1))
+    else:
+        sample_num = 0
+    
+    # Get base directory
+    base_dir = os.path.dirname(trigger_path)
+    
+    return sample_num, base_dir
+
+def find_previous_decisions(trigger_path: str, current_dl: int, sample_num: int, base_dir: str) -> List[str]:
+    # Find all previous decision files for DL levels 1 to current_dl-1
+    # Returns list like ["SampleRuns/4/decision1_4.txt"] for DL=2
+    
+    import os
+    
+    prev_decisions = []
+    
+    dl = 1
+    while dl < current_dl:
+        # Construct filename: decision<DL>_<sample_num>.txt
+        filename = "decision" + str(dl) + "_" + str(sample_num) + ".txt"
+        decision_path = os.path.join(base_dir, filename)
+        
+        # Check if file exists
+        if os.path.exists(decision_path):
+            prev_decisions.append(decision_path)
+        
+        dl += 1
+    
+    return prev_decisions
+
+def run_sequential_decisions(state: CNFState, engine: InferenceEngine, 
+                             cnf_path: str, decision_paths: List[str]) -> List[int]:
+    # Run each decision file in order and accumulate assigned literals
+    # Returns list of all literals assigned across all previous decisions
+    
+    all_assigned = []
+    
+    i = 0
+    while i < len(decision_paths):
+        dec_path = decision_paths[i]
+        
+        # Read trigger from this decision file
+        trig, dl = read_trigger_file(dec_path)
+        
+        # Run BCP for this decision
+        res = engine.run_bcp(trig, dl)
+        
+        # If conflict, we can't continue
+        if res.status == "CONFLICT":
+            return all_assigned
+        
+        # Collect newly assigned literals from this decision
+        # We track the trigger literal itself
+        if trig != 0:
+            all_assigned.append(trig)
+        
+        i += 1
+    
+    return all_assigned
 
 # -----------------------------
 # Main
@@ -529,44 +631,38 @@ def write_bcp_output(path: str, res: BCPResult, state: CNFState) -> None:
 
 def main():
     import sys
-    if len(sys.argv) < 4:
-        print("Usage: python main.py <problem.cnf> <trigger.txt> <bcp_output.txt>")
+    if len(sys.argv) < 3:
+        print("Usage: python main.py <problem.cnf> [<trigger.txt>] <bcp_output.txt>")
+        print("  2 args: python main.py <problem.cnf> <output.txt>  (DL0 mode)")
+        print("  3 args: python main.py <problem.cnf> <trigger.txt> <output.txt>")
         return
 
     cnf_path = sys.argv[1]
-    trigger_path = sys.argv[2]
-    out_path = sys.argv[3]
+    
+    # Support both 2-arg (DL0) and 3-arg (with trigger) modes
+    if len(sys.argv) == 3:
+        # DL0 mode: no trigger file
+        trigger_path = None
+        out_path = sys.argv[2]
+        trig = 0
+        dl = 0
+    else:
+        # Normal mode: with trigger file
+        trigger_path = sys.argv[2]
+        out_path = sys.argv[3]
+        trig, dl = read_trigger_file(trigger_path)
 
     state = parse_dimacs_cnf(cnf_path)
     engine = InferenceEngine(state)
-
-    trig, dl = read_trigger_file(trigger_path)
     
-    # -------------------------------------------------------------
-    # MANUAL STATE INJECTION (DOSYA DEGISTIRILEMEDIGI ICIN)
-    # -------------------------------------------------------------
-    # Eger decision2 calisiyorsa (veya baska testler), onceki durumlari
-    # burada kodun icinde manuel olarak tanimliyoruz.
-    # Bu kisim sadece testleri gecmek icin gerekli.
-    
-    prev_assigns = []
-    
-    # "decision2" dosyasini gordugumuzde veya DL:2 oldugunda 
-    # DL:1'de yapilan atamayi (1=TRUE) simule et.
-    if "decision2" in trigger_path or (trig == 2 and dl == 2):
-        prev_assigns = [1] 
-    
-    # (Eger baska testler varsa onlari da buraya elif olarak ekleyebilirsiniz)
-    
-    if prev_assigns:
-        ok_prev = engine.apply_previous_assignments(prev_assigns)
-        if not ok_prev:
-            res_fail = BCPResult()
-            res_fail.status = "CONFLICT"
-            res_fail.exec_log.append("Conflict during setup of previous state")
-            write_bcp_output(out_path, res_fail, state)
-            return
-    # -------------------------------------------------------------
+    # Auto-load previous decisions if DL > 1
+    if dl > 1 and trigger_path is not None:
+        sample_num, base_dir = get_sample_info(trigger_path)
+        prev_decision_paths = find_previous_decisions(trigger_path, dl, sample_num, base_dir)
+        
+        if len(prev_decision_paths) > 0:
+            # Run all previous decisions to build up state
+            prev_assigned = run_sequential_decisions(state, engine, cnf_path, prev_decision_paths)
 
     res = engine.run_bcp(trig, dl)
 
