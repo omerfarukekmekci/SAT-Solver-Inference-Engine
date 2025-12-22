@@ -1,13 +1,9 @@
 --- STATUS ---
 STATUS: CONFLICT
-DL: 1
-CONFLICT_ID: 3
+DL: 0
+CONFLICT_ID: None
 --- BCP EXECUTION LOG ---
-[DL1] DECIDE L=-1 |
-[DL1] UNIT L=2 | C1
-[DL1] ASSIGN L=2 |
-[DL1] SATISFIED | C1
-[DL1] CONFLICT | Violation: C3
+Conflict during setup of previous state
 --- CURRENT VARIABLE STATE ---
-1 | FALSE
+1 | TRUE
 2 | TRUE
